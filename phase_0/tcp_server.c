@@ -5,11 +5,20 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #define PORT 8080
 #define BUFF_SIZE 10000
 #define MAX_ACCEPT_BACKLOG 5
+
+void strrev(char* str) {
+    for (int l = 0, r = strlen(str) - 2; l < r; l++, r--) {
+        char temp = str[l];
+        str[l] = str[r];
+        str[r] = temp;
+    }
+}
 
 int main() {
     int listen_sock_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -37,4 +46,27 @@ int main() {
 
     int conn_sock_fd = accept(listen_sock_fd, ( struct sockaddr * )&client_addr, &client_addr_len);
     printf("[INFO] Client connected to server\n");
+
+    while (1) {
+        char buf[BUFF_SIZE]; 
+        memset(buf, 0, BUFF_SIZE);
+
+        ssize_t read_n = recv(conn_sock_fd, buf, sizeof(buf), 0);
+
+        if (read_n < 0) {
+            printf("[INFO] Error occured. Closing server\n");
+            close(conn_sock_fd);
+            exit(1);
+        } else if (read_n == 0) {
+            printf("[INFO] Client disconnected. Closing server\n");
+            close(conn_sock_fd);
+            exit(1);
+        }
+
+        printf("[Client message] %s", buf);
+
+        strrev(buf);
+
+        send(conn_sock_fd, buf, read_n, 0);
+    }
 }
