@@ -69,4 +69,6 @@ int main() {
 
         send(conn_sock_fd, buf, read_n, 0);
     }
+
+    return 0;
 }
