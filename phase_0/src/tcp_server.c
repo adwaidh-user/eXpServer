@@ -1,8 +1,7 @@
-#include <arpa/inet.h>
-#include <netdb.h>
 #include <netinet/in.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -10,6 +9,7 @@
 #define PORT 8080
 #define BUFF_SIZE 10000
 #define MAX_ACCEPT_BACKLOG 5
+#define MAX_EPOLL_EVENTS 10
 
 void strrev(char *str) {
 	for (int l = 0, r = strlen(str) - 2; l < r; l++, r--) {
@@ -39,39 +39,62 @@ int main() {
 	listen(listen_sock_fd, MAX_ACCEPT_BACKLOG);
 	printf("[INFO] Server listening on port %d\n", PORT);
 
+	// defining epoll instance
+	int epollfd = epoll_create1(0);
+	struct epoll_event event, events[MAX_EPOLL_EVENTS];
+
+	event.events = EPOLLIN;
+	event.data.fd = listen_sock_fd;
+
+	// Added listening socket to epoll monitor events
+	epoll_ctl(epollfd, EPOLL_CTL_ADD, listen_sock_fd, &event);
+
 	struct sockaddr_in client_addr;
 	socklen_t client_addr_len = sizeof(client_addr);
 
 	while (1) {
-		int conn_sock_fd = accept(
-			listen_sock_fd, (struct sockaddr *)&client_addr, &client_addr_len);
-		printf("[INFO] Client connected to server\n");
+        printf("[DEBUG] Epoll wait\n");
+		int n_ready_fds = epoll_wait(epollfd, events, MAX_EPOLL_EVENTS, -1);
 
-		while (1) {
-			char buf[BUFF_SIZE];
-			memset(buf, 0, BUFF_SIZE);
+		for (int i = 0; i < n_ready_fds; ++i) {
+			int cur_fd = events[i].data.fd;
 
-			ssize_t read_n = recv(conn_sock_fd, buf, sizeof(buf), 0);
+			if (cur_fd == listen_sock_fd) { // cur event on listening socket
+				int conn_sock_fd =
+					accept(listen_sock_fd, (struct sockaddr *)&client_addr,
+						   &client_addr_len);
+				printf("[INFO] Client connected to server\n");
 
-			if (read_n < 0) {
-				printf("[INFO] Error occured. Closing server\n");
-				close(conn_sock_fd);
-                break;
-			} else if (read_n == 0) {
-				printf("[INFO] Client disconnected. Closing server\n");
-				close(conn_sock_fd);
-                break;
+				event.events = EPOLLIN;
+				event.data.fd = conn_sock_fd;
+
+				epoll_ctl(epollfd, EPOLL_CTL_ADD, conn_sock_fd, &event);
+			} else {
+				char buf[BUFF_SIZE];
+				memset(buf, 0, BUFF_SIZE);
+
+				ssize_t read_n = recv(cur_fd, buf, sizeof(buf), 0);
+
+				if (read_n < 0) {
+					printf("[INFO] Error occured. Closing connection\n");
+					close(cur_fd);
+					break;
+				} else if (read_n == 0) {
+					printf("[INFO] Client disconnected. Closing connection\n");
+					close(cur_fd);
+					break;
+				}
+
+				printf("[CLIENT MESSAGE] %s", buf);
+
+				strrev(buf);
+
+				send(cur_fd, buf, read_n, 0);
 			}
-
-			printf("[CLIENT MESSAGE] %s", buf);
-
-			strrev(buf);
-
-			send(conn_sock_fd, buf, read_n, 0);
 		}
 	}
 
-    close(listen_sock_fd);
+	close(listen_sock_fd);
 
 	return 0;
 }
