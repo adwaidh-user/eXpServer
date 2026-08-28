@@ -1,4 +1,4 @@
-gcc -g -o "../build/xps_$1" \
+gcc -g -o "../build/xps_v$1" \
     main.c \
     ../lib/vec/vec.c \
     core/xps_core.c \
