@@ -25,20 +25,20 @@ xps_pipe_t *xps_pipe_create(xps_core_t *core, size_t buff_thresh,
 	pipe->buff_list = buff_list;
 	pipe->buff_thresh = buff_thresh;
 
+	/*Attach source and sink to pipe*/
+	if (xps_pipe_attach_source(pipe, source) != OK) {
+		logger(LOG_DEBUG, "xps_pipe_create()", "failed to attach source");
+		return NULL;
+	}
+
+	if (xps_pipe_attach_sink(pipe, sink) != OK) {
+		logger(LOG_DEBUG, "xps_pipe_create()", "failed to attach sink");
+		xps_pipe_detach_source(pipe);
+		return NULL;
+	}
 	/* Add pipe to 'pipes' list of core (see core module below)*/
 	vec_push(&(core->pipes), pipe);
 
-	/*Attach source and sink to pipe*/
-	if (xps_pipe_attach_source(pipe, source) != OK) {
-	    logger(LOG_DEBUG, "xps_pipe_create()", "failed to attach source");
-        return NULL;
-    }
-
-	if (xps_pipe_attach_sink(pipe, sink) != OK) {
-	    logger(LOG_DEBUG, "xps_pipe_create()", "failed to attach sink");
-        xps_pipe_detach_source(pipe);
-        return NULL;
-    }
 	/*Make both source and sink of pipe active*/
 	source->ready = true;
 	sink->ready = true;
