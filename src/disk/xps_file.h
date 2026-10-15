@@ -5,7 +5,7 @@
 
 struct xps_file_s {
     xps_core_t *core;
-    const char *file_path;
+    char *file_path;
     xps_pipe_source_t *source;
     FILE *file_struct;
     size_t size;

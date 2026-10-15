@@ -24,6 +24,7 @@ xps_file_t *xps_file_create(xps_core_t *core, const char *file_path,
 		if (resolved_public)
 			free(resolved_public);
 
+        *error = E_NOTFOUND;
 		return NULL;
 	}
 
@@ -32,10 +33,8 @@ xps_file_t *xps_file_create(xps_core_t *core, const char *file_path,
 		logger(LOG_WARNING, "xps_file_create()",
 			   "file requested is outside of public directory");
 		*error = E_PERMISSION;
-		/*free both path*/
 		free(resolved_path);
 		free(resolved_public);
-		/*close file object*/
 		return NULL;
 	}
 
@@ -48,7 +47,6 @@ xps_file_t *xps_file_create(xps_core_t *core, const char *file_path,
 	if (stat(file_path, &file_stat) != 0) {
 		logger(LOG_ERROR, "xps_file_create()", "stat() failed");
 		perror("Error message");
-		/*close file object*/
 		return NULL;
 	}
 
@@ -56,7 +54,6 @@ xps_file_t *xps_file_create(xps_core_t *core, const char *file_path,
 		logger(LOG_WARNING, "xps_file_create()",
 			   "others do not have read permission");
 		*error = E_PERMISSION;
-		/*close file object*/
 		return NULL;
 	}
 
@@ -90,6 +87,17 @@ xps_file_t *xps_file_create(xps_core_t *core, const char *file_path,
 		return NULL;
 	}
 
+	/* Duplicate the path so 'file' owns it and does not dangle once the
+	 * caller's buffer (e.g. a stack array) goes out of scope */
+	file->file_path = strdup(file_path);
+	if (file->file_path == NULL) {
+		logger(LOG_ERROR, "xps_file_create()",
+			   "strdup() failed for 'file_path'");
+		fclose(file_struct);
+		free(file);
+		return NULL;
+	}
+
 	xps_pipe_source_t *source = xps_pipe_source_create(
 		(void *)file, file_source_handler, file_source_close_handler);
 
@@ -97,16 +105,14 @@ xps_file_t *xps_file_create(xps_core_t *core, const char *file_path,
 		logger(LOG_ERROR, "xps_file_create()",
 			   "xps_pipe_source_create() failed");
 		fclose(file_struct);
+		free(file->file_path);
 		free(file);
 		return NULL;
 	}
 
 	// Init values
 	source->ready = true;
-
-	/*initialise the fields of file instance*/
 	file->core = core;
-	file->file_path = file_path;
 	file->source = source;
 	file->file_struct = file_struct;
 	file->size = file_stat.st_size;
@@ -125,6 +131,7 @@ void xps_file_destroy(xps_file_t *file) {
 	fclose(file->file_struct);
 	if (file->source != NULL)
 		xps_pipe_source_destroy(file->source);
+	free(file->file_path);
 	free(file);
 
 	logger(LOG_DEBUG, "xps_file_destroy()", "destroyed file struct");

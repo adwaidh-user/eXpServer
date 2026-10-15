@@ -19,12 +19,14 @@
  * @member *to_client_buff : buffer for data to be written to pipe from session
  * to client
  * @member *from_client_buff : buffer for data read from pipe between client and
+ * @member *http_req : for managinf sessions w.r.t http
  * session
  */
 struct xps_session_s {
 	xps_core_t *core;
 	xps_connection_t *client;
 	xps_connection_t *upstream;
+    xps_http_req_t *http_req;
 	bool upstream_connected;
 	bool upstream_error_res_set;
 	u_long upstream_write_bytes;

@@ -14,6 +14,7 @@ void file_sink_close_handler(void *ptr);
 void set_to_client_buff(xps_session_t *session, xps_buffer_t *buff);
 void set_from_client_buff(xps_session_t *session, xps_buffer_t *buff);
 void session_check_destroy(xps_session_t *session);
+void session_process_request(xps_session_t *session);
 
 xps_session_t *xps_session_create(xps_core_t *core, xps_connection_t *client) {
 	assert(core);
@@ -72,6 +73,8 @@ xps_session_t *xps_session_create(xps_core_t *core, xps_connection_t *client) {
 	session->client_sink->ready = true;
 	session->upstream_sink->ready = true;
 	session->file_sink->ready = true;
+	session->http_req = NULL;
+	session->file = NULL;
 
 	// Attach client
 	if (xps_pipe_create(core, DEFAULT_PIPE_BUFF_THRESH, client->source,
@@ -100,52 +103,6 @@ xps_session_t *xps_session_create(xps_core_t *core, xps_connection_t *client) {
 
 	logger(LOG_DEBUG, "xps_session_create()", "created session");
 
-	/* UPSTREAM CONNECTION */
-	if (client->listener->port == 8001) {
-		xps_connection_t *upstream = xps_upstream_create(core, "0.0.0.0", 3000);
-		if (upstream == NULL) {
-			logger(LOG_ERROR, "xps_session_create()",
-				   "xps_upstream_create() failed");
-			perror("Error message");
-			xps_session_destroy(session);
-			return NULL;
-		}
-		session->upstream = upstream;
-
-		if (xps_pipe_create(core, DEFAULT_PIPE_BUFF_THRESH,
-							session->upstream_source, upstream->sink) == NULL ||
-			xps_pipe_create(core, DEFAULT_PIPE_BUFF_THRESH, upstream->source,
-							session->upstream_sink) == NULL) {
-
-			logger(LOG_ERROR, "xps_session_create()",
-				   "failed creating upstream pipes");
-			xps_session_destroy(session);
-			return NULL;
-		}
-	}
-	/* FILE SERVER */
-	else if (client->listener->port == 8002) {
-		int error;
-		xps_file_t *file =
-			xps_file_create(core, "../public/sample.txt", &error);
-		if (file == NULL) {
-			logger(LOG_ERROR, "xps_session_create()",
-				   "xps_file_create() failed");
-			perror("Error message");
-			xps_session_destroy(session);
-			return NULL;
-		}
-
-		session->file = file;
-		if (xps_pipe_create(core, DEFAULT_PIPE_BUFF_THRESH, file->source,
-							session->file_sink) == NULL) {
-			logger(LOG_ERROR, "xps_session_create()",
-				   "failed creating upstream pipes");
-			xps_session_destroy(session);
-			return NULL;
-		}
-	}
-
 	return session;
 }
 
@@ -164,7 +121,7 @@ void client_source_handler(void *ptr) {
 	if (session->to_client_buff == NULL) {
 		logger(LOG_ERROR, "client_source_handler()",
 			   "previous data not yet sent to client");
-        source->ready = false;
+		source->ready = false;
 		return;
 	}
 	// write to session->to_client_buff
@@ -207,8 +164,49 @@ void client_sink_handler(void *ptr) {
 		return;
 	}
 
-	set_from_client_buff(session, buff);
-	xps_pipe_sink_clear(sink, to_read_n);
+	if (session->http_req == NULL) {
+		int error;
+		xps_http_req_t *http_req =
+			xps_http_req_create(session->core, buff, &error);
+
+		xps_buffer_destroy(buff);
+
+		if (error == E_FAIL) {
+			error = HTTP_BAD_REQUEST;
+			logger(LOG_ERROR, "client_sink_handler()",
+				   "xps_http_req_create() failed with err code: %d", error);
+			session_process_request(session);
+			return;
+		}
+
+		if (error == E_AGAIN) {
+			logger(
+				LOG_ERROR, "client_sink_handler()",
+				"xps_http_req_create() returned E_AGAIN waiting for more data");
+			return;
+		}
+
+		session->http_req = http_req;
+		xps_buffer_t *http_req_buff = xps_http_req_serialize(session->http_req);
+
+		if (http_req_buff == NULL) {
+			logger(LOG_ERROR, "client_sink_handler()",
+				   "xps_http_req_serialize() failed");
+			xps_http_req_destroy(session->core, session->http_req);
+			session->http_req = NULL;
+			session_process_request(session);
+			return;
+		}
+
+		set_from_client_buff(session, http_req_buff);
+
+		size_t to_clear_n = sink->pipe->buff_list->len;
+		xps_pipe_sink_clear(sink, to_clear_n);
+		session_process_request(session);
+	} else {
+		set_from_client_buff(session, buff);
+		xps_pipe_sink_clear(sink, to_read_n);
+	}
 }
 
 void client_sink_close_handler(void *ptr) {
@@ -229,7 +227,7 @@ void upstream_source_handler(void *ptr) {
 	if (session->from_client_buff == NULL) {
 		logger(LOG_ERROR, "upstream_source_handler()",
 			   "no data to be written to upstream");
-        source->ready = false;
+		source->ready = false;
 		return;
 	}
 
@@ -404,6 +402,8 @@ void xps_session_destroy(xps_session_t *session) {
 		xps_buffer_destroy(session->to_client_buff);
 	if (session->from_client_buff != NULL)
 		xps_buffer_destroy(session->from_client_buff);
+	if (session->http_req != NULL)
+		xps_http_req_destroy(session->core, session->http_req);
 
 	xps_core_t *core = session->core;
 	vec_void_t *sessions = &(core->sessions);
@@ -420,4 +420,87 @@ void xps_session_destroy(xps_session_t *session) {
 	free(session);
 
 	logger(LOG_DEBUG, "xps_session_destroy()", "destroyed session");
+}
+
+void session_process_request(xps_session_t *session) {
+	assert(session != NULL);
+
+	/*allocate a reply buffer that will store response*/
+	char *reply = (char *)malloc(DEFAULT_BUFFER_SIZE);
+	if (reply == NULL) {
+		logger(LOG_ERROR, "session_process_request()",
+			   "malloc() failed for 'reply'");
+		return;
+	}
+	// BAD REQUEST
+	if (session->http_req == NULL || session->http_req->path == NULL) {
+		sprintf(reply, "HTTP/1.1 400 Bad Request\r\nServer: eXpServer\r\n\r\n");
+		xps_buffer_t *buff =
+			xps_buffer_create(strlen(reply), strlen(reply), reply);
+		if (buff == NULL) {
+			logger(LOG_ERROR, "session_process_request()",
+				   "xps_buffer_create() failed");
+			free(reply);
+			return;
+		}
+		/*set buff to to_client_buff*/
+		set_to_client_buff(session, buff);
+		return;
+	}
+
+	char file_path[DEFAULT_BUFFER_SIZE];
+	strcpy(file_path, "../public");
+	strcat(file_path, session->http_req->path);
+
+	int error;
+
+	xps_file_t *file = xps_file_create(session->core, file_path, &error);
+	if (file == NULL) {
+		if (error == E_PERMISSION)
+			sprintf(reply,
+					"HTTP/1.1 403 Forbidden\r\nServer: eXpServer\r\n\r\n");
+		else if (error == E_NOTFOUND)
+			sprintf(reply,
+					"HTTP/1.1 404 Not Found\r\nServer: eXpServer\r\n\r\n");
+		else
+			sprintf(reply, "HTTP/1.1 500 Internal Server Error\r\nServer: "
+						   "eXpServer\r\n\r\n");
+
+		xps_buffer_t *buff =
+			xps_buffer_create(strlen(reply), strlen(reply), reply);
+		if (buff == NULL) {
+			logger(LOG_ERROR, "session_process_request()",
+				   "xps_buffer_create() failed");
+			free(reply);
+			return;
+		}
+		set_to_client_buff(session, buff);
+		return;
+	}
+
+	if (session->file != NULL)
+		xps_file_destroy(session->file);
+	session->file = file;
+
+	sprintf(reply,
+			"HTTP/1.1 200 OK\r\nContent-Type: %s\r\nServer: eXpServer\r\n\r\n",
+			session->file->mime_type ? session->file->mime_type : "text/plain");
+	xps_buffer_t *buff = xps_buffer_create(strlen(reply), strlen(reply), reply);
+	if (buff == NULL) {
+		logger(LOG_ERROR, "session_process_request()",
+			   "xps_buffer_create() failed");
+		free(reply);
+		return;
+	}
+	set_to_client_buff(session, buff);
+	/*create pipe with session->file->source and session->file_sink*/
+	if (xps_pipe_create(session->core, DEFAULT_PIPE_BUFF_THRESH,
+						session->file->source, session->file_sink) == NULL) {
+		xps_file_destroy(file);
+		session->file = NULL;
+		xps_buffer_destroy(buff);
+		set_to_client_buff(session, NULL);
+		logger(LOG_ERROR, "session_process_request()",
+			   "xps_pipe_create() failed: file source and session file sink");
+	}
 }
