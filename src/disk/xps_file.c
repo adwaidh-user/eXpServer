@@ -29,7 +29,9 @@ xps_file_t *xps_file_create(xps_core_t *core, const char *file_path,
 	}
 
 	size_t public_len = strlen(resolved_public);
-	if (strncmp(resolved_path, resolved_public, public_len) != 0) {
+	if (strncmp(resolved_path, resolved_public, public_len) != 0 ||
+		(resolved_path[public_len] != '\0' &&
+		 resolved_path[public_len] != '/')) {
 		logger(LOG_WARNING, "xps_file_create()",
 			   "file requested is outside of public directory");
 		*error = E_PERMISSION;

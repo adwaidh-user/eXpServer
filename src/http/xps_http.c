@@ -497,25 +497,57 @@ const char *xps_http_get_header(vec_void_t *headers, const char *key) {
 	return NULL;
 }
 
+void xps_http_set_header(vec_void_t *headers, const char *key, const char *val) {
+	assert(headers != NULL);
+	assert(key != NULL);
+	assert(val != NULL);
+
+	xps_keyval_t *header = (xps_keyval_t *)malloc(sizeof(xps_keyval_t));
+	if (header == NULL) {
+		logger(LOG_ERROR, "xps_http_set_header()",
+			   "malloc() failed for 'header'");
+		return;
+	}
+
+	header->key = strdup(key);
+	header->val = strdup(val);
+
+	if (header->key == NULL || header->val == NULL) {
+		if (header->key)
+			free(header->key);
+		if (header->val)
+			free(header->val);
+		free(header);
+		logger(LOG_ERROR, "xps_http_set_header()",
+			   "strdup() failed for 'header->key' or 'header->val'");
+		return;
+	}
+
+
+    vec_push(headers, header);
+
+	return;
+}
+
 xps_buffer_t *xps_http_serialize_headers(vec_void_t *headers) {
 	assert(headers != NULL);
 	xps_buffer_t *buff = xps_buffer_create(DEFAULT_BUFFER_SIZE, 0, NULL);
 	if (buff == NULL) {
 		logger(LOG_ERROR, "xps_http_serialize_headers()",
 			   "xps_buffer_create() failed");
-        return NULL;
+		return NULL;
 	}
 	buff->pos = buff->data;
 	buff->data[0] = '\0';
-	buff->len = 1;
+	buff->len = 0;
 	for (int i = 0; i < headers->length; i++) {
 		xps_keyval_t *header = headers->data[i];
 
 		size_t header_str_len = strlen(header->key) + strlen(header->val) + 5;
 		char header_str[header_str_len];
 
-		sprintf(header_str, "%s: %s\n", header->key, header->val);
-		if ((buff->size - buff->len) < header_str_len) { // buffer is small
+		sprintf(header_str, "%s: %s\r\n", header->key, header->val);
+		while ((buff->size - buff->len) < header_str_len) { // buffer is small
 			u_char *new_data = realloc(buff->data, buff->size * 2);
 			if (new_data == NULL) {
 				xps_buffer_destroy(buff);

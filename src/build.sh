@@ -9,6 +9,7 @@ gcc -g -o "../build/xps_v$1" \
     disk/xps_mime.c \
     http/xps_http.c \
     http/xps_http_req.c \
+    http/xps_http_res.c \
     network/xps_connection.c \
     network/xps_listener.c \
     network/xps_upstream.c \
