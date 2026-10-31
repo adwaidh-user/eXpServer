@@ -29,6 +29,8 @@ int http_process_request_line(xps_http_req_t *http_req, xps_buffer_t *buff) {
 			http_req->port = 443;
 		else
 			http_req->port = 80;
+		if (port_str)
+			free(port_str);
 	} else {
 		http_req->port = atoi(port_str);
 		free(port_str);
