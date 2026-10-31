@@ -1,6 +1,8 @@
-gcc -g -o "../build/xps_v$1" \
+gcc -g -static -o "../build/xps_v$1" \
     main.c \
     lib/vec/vec.c \
+    lib/parson/parson.c \
+    config/xps_config.c \
     core/xps_core.c \
     core/xps_loop.c \
     core/xps_pipe.c \
@@ -13,6 +15,7 @@ gcc -g -o "../build/xps_v$1" \
     network/xps_connection.c \
     network/xps_listener.c \
     network/xps_upstream.c \
+    utils/xps_buffer.c \
+    utils/xps_cliargs.c \
     utils/xps_logger.c \
-    utils/xps_utils.c \
-    utils/xps_buffer.c
+    utils/xps_utils.c

@@ -11,6 +11,12 @@ char *get_remote_ip(u_int sock_fd);
 void vec_filter_null(vec_void_t *v);
 const char *get_file_ext(const char *file_path);
 char *str_from_ptrs(const char *start, const char *end);
+bool str_starts_with(const char* str, const char* prefix);
+char *str_create(const char *str);
+char *path_join(const char* path1, const char* path2);
+bool is_abs_path(const char* path);
+bool is_file(const char* path);
+bool is_dir(const char* path);
 
 // Other functions
 

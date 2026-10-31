@@ -2,3 +2,7 @@
 **/build/
 *.txt
 expserver-tester/
+*/valgrind-out*
+*/vgcore.*
+**/public
+

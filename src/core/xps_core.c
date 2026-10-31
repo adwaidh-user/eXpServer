@@ -1,6 +1,6 @@
 #include "xps_core.h"
 
-xps_core_t *xps_core_create() {
+xps_core_t *xps_core_create(xps_config_t *config) {
 	xps_core_t *core = (xps_core_t *)malloc(sizeof(xps_core_t));
 	if (core == NULL) {
 		logger(LOG_ERROR, "xps_core_create()", "malloc failed for 'loop'");
@@ -16,6 +16,7 @@ xps_core_t *xps_core_create() {
 
 	// Init values
 	core->loop = loop;
+    core->config = config;
 	vec_init(&(core->listeners));
 	vec_init(&(core->connections));
 	vec_init(&(core->pipes));
@@ -74,6 +75,7 @@ void xps_core_destroy(xps_core_t *core) {
 
 	xps_loop_destroy(core->loop);
 
+    xps_config_destroy(core->config);
 	free(core);
 
 	logger(LOG_DEBUG, "xps_core_destroy()", "destroyed core");
@@ -86,10 +88,10 @@ void xps_core_start(xps_core_t *core) {
 	logger(LOG_DEBUG, "xps_start()", "starting core");
 
 	/* create listeners from port 8001 to 8004 */
-	for (int port = 8001; port <= 8004; port++) {
-		xps_listener_create(core, "0.0.0.0", port);
-		logger(LOG_INFO, "main()", "Server listening on port %u", port);
-	}
+	// for (int port = 8001; port <= 8004; port++) {
+	// 	xps_listener_create(core, "0.0.0.0", port);
+	// 	logger(LOG_INFO, "main()", "Server listening on port %u", port);
+	// }
 
 	/* run loop instance using xps_loop_run() */
 	xps_loop_run(core->loop);

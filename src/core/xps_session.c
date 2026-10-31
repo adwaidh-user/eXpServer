@@ -75,6 +75,7 @@ xps_session_t *xps_session_create(xps_core_t *core, xps_connection_t *client) {
 	session->file_sink->ready = true;
 	session->http_req = NULL;
 	session->file = NULL;
+	session->lookup = NULL;
 
 	// Attach client
 	if (xps_pipe_create(core, DEFAULT_PIPE_BUFF_THRESH, client->source,
@@ -425,10 +426,10 @@ void xps_session_destroy(xps_session_t *session) {
 void session_process_request(xps_session_t *session) {
 	assert(session != NULL);
 
+	xps_http_res_t *http_res;
 	// BAD REQUEST
 	if (session->http_req == NULL || session->http_req->path == NULL) {
-		xps_http_res_t *http_res =
-			xps_http_res_create(session->core, HTTP_BAD_REQUEST);
+		http_res = xps_http_res_create(session->core, HTTP_BAD_REQUEST);
 		if (http_res == NULL) {
 			logger(LOG_ERROR, "session_process_request()",
 				   "xps_http_res_create() failed for HTTP_BAD_REQUEST");
@@ -441,70 +442,146 @@ void session_process_request(xps_session_t *session) {
 				   "xps_http_res_serialize() failed for HTTP_BAD_REQUEST");
 			return;
 		}
-		/*set buff to to_client_buff*/
 		set_to_client_buff(session, buff);
 		return;
 	}
 
-	char file_path[DEFAULT_BUFFER_SIZE];
-	strcpy(file_path, "../public");
-	strcat(file_path, session->http_req->path);
-
 	int error;
+	xps_config_lookup_t *lookup = xps_config_lookup(
+		session->core->config, session->http_req, session->client, &error);
+	if (lookup == NULL) {
+		logger(LOG_ERROR, "session_process_request()",
+			   "xps_config_lookup() returned NULl. err code: %d", error);
+		if (error == E_NOTFOUND)
+			http_res = xps_http_res_create(session->core, HTTP_NOT_FOUND);
+		else if (error == E_PERMISSION)
+			http_res = xps_http_res_create(session->core, HTTP_FORBIDDEN);
+		else
+			http_res =
+				xps_http_res_create(session->core, HTTP_INTERNAL_SERVER_ERROR);
 
-	xps_file_t *file = xps_file_create(session->core, file_path, &error);
-	if (file == NULL) {
-		xps_http_res_t *http_res = xps_http_res_create(
-			session->core, error == E_PERMISSION ? HTTP_FORBIDDEN
-						   : error == E_NOTFOUND ? HTTP_NOT_FOUND
-												 : HTTP_INTERNAL_SERVER_ERROR);
-		if (http_res == NULL) {
-			logger(LOG_ERROR, "session_process_request()",
-				   "xps_http_res_create() failed for error response");
+		xps_buffer_t *buff = xps_http_res_serialize(http_res);
+		set_to_client_buff(session, buff);
+		xps_http_res_destroy(http_res);
+		return;
+	}
+
+	if (lookup->type == REQ_FILE_SERVE) {
+		xps_file_t *file =
+			xps_file_create(session->core, lookup->file_path, &error);
+		xps_config_lookup_destroy(lookup, session->core);
+		if (file == NULL) {
+			xps_http_res_t *http_res = xps_http_res_create(
+				session->core, error == E_PERMISSION ? HTTP_FORBIDDEN
+							   : error == E_NOTFOUND
+								   ? HTTP_NOT_FOUND
+								   : HTTP_INTERNAL_SERVER_ERROR);
+			if (http_res == NULL) {
+				logger(LOG_ERROR, "session_process_request()",
+					   "xps_http_res_create() failed for error response");
+				return;
+			}
+			xps_buffer_t *buff = xps_http_res_serialize(http_res);
+			xps_http_res_destroy(http_res);
+			if (buff == NULL) {
+				logger(LOG_ERROR, "session_process_request()",
+					   "xps_http_res_serialize() failed for error response");
+				return;
+			}
+			set_to_client_buff(session, buff);
 			return;
 		}
+
+		if (session->file != NULL)
+			xps_file_destroy(session->file);
+		session->file = file;
+
+		http_res = xps_http_res_create(session->core, HTTP_OK);
+
+		/*the body is streamed separately through the file pipe, so
+		 * Content-Length must be the file's size*/
+		char contentLength[24];
+		snprintf(contentLength, sizeof(contentLength), "%zu", file->size);
+		xps_http_set_header(&(http_res->headers), "Content-Length",
+							contentLength);
+		xps_http_set_header(&(http_res->headers), "Content-Type",
+							session->file->mime_type ? session->file->mime_type
+													 : "text/plain");
+
 		xps_buffer_t *buff = xps_http_res_serialize(http_res);
 		xps_http_res_destroy(http_res);
 		if (buff == NULL) {
 			logger(LOG_ERROR, "session_process_request()",
-				   "xps_http_res_serialize() failed for error response");
+				   "xps_http_res_serialize() failed for HTTP_OK");
 			return;
 		}
+		/*create pipe with session->file->source and session->file_sink*/
+		if (xps_pipe_create(session->core, DEFAULT_PIPE_BUFF_THRESH,
+							session->file->source,
+							session->file_sink) == NULL) {
+			xps_file_destroy(file);
+			session->file = NULL;
+			xps_buffer_destroy(buff);
+			logger(
+				LOG_ERROR, "session_process_request()",
+				"xps_pipe_create() failed: file source and session file sink");
+			return;
+		}
+
 		set_to_client_buff(session, buff);
-		return;
-	}
+	} else if (lookup->type == REQ_REVERSE_PROXY) {
+		char host[256];
+		u_int port;
 
-	if (session->file != NULL)
-		xps_file_destroy(session->file);
-	session->file = file;
+		sscanf(lookup->upstream, "%[^:]:%u", host, &port);
 
-	xps_http_res_t *http_res = xps_http_res_create(session->core, HTTP_OK);
+		xps_config_lookup_destroy(lookup, session->core);
+		xps_connection_t *upstream =
+			xps_upstream_create(session->core, host, port);
 
-	/*the body is streamed separately through the file pipe, so
-	 * Content-Length must be the file's size*/
-	char contentLength[24];
-	snprintf(contentLength, sizeof(contentLength), "%zu", file->size);
-	xps_http_set_header(&(http_res->headers), "Content-Length", contentLength);
-	xps_http_set_header(&(http_res->headers), "Content-Type",
-						session->file->mime_type ? session->file->mime_type
-												 : "text/plain");
+		if (upstream == NULL) {
+			logger(LOG_ERROR, "session_process_request()",
+				   "xps_upstream_create() returned NULL");
+			http_res = xps_http_res_create(session->core, HTTP_BAD_GATEWAY);
+			if (http_res == NULL) {
+				logger(LOG_ERROR, "session_process_request()",
+					   "xps_http_res_create() failed for error response");
+				return;
+			}
+			xps_buffer_t *buff = xps_http_res_serialize(http_res);
+			xps_http_res_destroy(http_res);
+			if (buff == NULL) {
+				logger(LOG_ERROR, "session_process_request()",
+					   "xps_http_res_serialize() failed for error response");
+				return;
+			}
+			set_to_client_buff(session, buff);
+			return;
+		}
 
-	xps_buffer_t *buff = xps_http_res_serialize(http_res);
-	xps_http_res_destroy(http_res);
-	if (buff == NULL) {
-		logger(LOG_ERROR, "session_process_request()",
-			   "xps_http_res_serialize() failed for HTTP_OK");
-		return;
-	}
-	set_to_client_buff(session, buff);
-	/*create pipe with session->file->source and session->file_sink*/
-	if (xps_pipe_create(session->core, DEFAULT_PIPE_BUFF_THRESH,
-						session->file->source, session->file_sink) == NULL) {
-		xps_file_destroy(file);
-		session->file = NULL;
-		xps_buffer_destroy(buff);
-		set_to_client_buff(session, NULL);
-		logger(LOG_ERROR, "session_process_request()",
-			   "xps_pipe_create() failed: file source and session file sink");
+		if (xps_pipe_create(session->core, DEFAULT_PIPE_BUFF_THRESH,
+							session->upstream_source, upstream->sink) == NULL ||
+			xps_pipe_create(session->core, DEFAULT_PIPE_BUFF_THRESH,
+							upstream->source, session->upstream_sink) == NULL) {
+			logger(LOG_ERROR, "session_process_request()",
+				   "xps_pipe_create() failed: Unable to create bidirectional "
+				   "pipe between upstream and session");
+			xps_connection_destroy(upstream);
+		}
+
+		session->upstream = upstream;
+	} else if (lookup->type == REQ_REDIRECT) {
+		xps_http_res_t *http_res =
+			xps_http_res_create(session->core, lookup->http_status_code);
+		xps_http_set_header(&http_res->headers, "Location",
+							lookup->redirect_url);
+
+		xps_config_lookup_destroy(lookup, session->core);
+		xps_buffer_t *http_res_buff = xps_http_res_serialize(http_res);
+		set_to_client_buff(session, http_res_buff);
+		xps_http_res_destroy(http_res);
+	} else {
+		logger(LOG_ERROR, "session_process_request()", "invalid lookup type");
+		xps_session_destroy(session);
 	}
 }

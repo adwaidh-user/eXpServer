@@ -120,3 +120,84 @@ char *str_from_ptrs(const char *start, const char *end) {
 
 	return str;
 }
+
+bool str_starts_with(const char *str, const char *prefix) {
+	assert(str != NULL);
+	assert(prefix != NULL);
+
+	size_t str_len = strlen(str);
+	size_t prefix_len = strlen(prefix);
+
+	if (str_len < prefix_len)
+		return false;
+
+	if (strncmp(str, prefix, prefix_len) != 0)
+		return false;
+
+	if (prefix_len > 0 && prefix[prefix_len - 1] == '/')
+		return true;
+
+	char next = str[prefix_len];
+	return (next == '\0' || next == '/');
+}
+
+char *path_join(const char *path_1, const char *path_2) {
+	assert(path_1 != NULL);
+	assert(path_2 != NULL);
+
+	int len_1 = strlen(path_1);
+	int len_2 = strlen(path_2);
+
+	bool has_backslash = (len_1 > 0 && path_1[len_1 - 1] == '/');
+
+	int joined_path_size = len_1 + len_2 + (has_backslash ? 1 : 2);
+	char *joined_path = (char *)malloc(joined_path_size);
+
+	if (joined_path == NULL) {
+		logger(LOG_ERROR, "join_path()",
+			   "failed to create joined path string. malloc returned NULL");
+		return NULL;
+	}
+	snprintf(joined_path, joined_path_size, "%s%s%s", path_1,
+			 has_backslash ? "" : "/", path_2);
+
+	return joined_path;
+}
+
+char *str_create(const char *str) {
+	assert(str != NULL);
+
+	char *new_str = malloc(strlen(str) + 1);
+	if (new_str == NULL) {
+		logger(LOG_ERROR, "str_create()", "malloc() failed for 'new_str'");
+		return NULL;
+	}
+	strcpy(new_str, str);
+
+	return new_str;
+}
+
+bool is_abs_path(const char *path) {
+	assert(path != NULL);
+	return path[0] == '/';
+}
+
+bool is_file(const char *path) {
+	assert(path != NULL);
+
+	struct stat path_stat;
+	if (stat(path, &path_stat) != 0)
+		return false;
+
+	return S_ISREG(path_stat.st_mode);
+}
+
+bool is_dir(const char *path) {
+	assert(path != NULL);
+
+	struct stat path_stat;
+	if (stat(path, &path_stat) != 0)
+		return false;
+
+	return S_ISDIR(path_stat.st_mode);
+}
