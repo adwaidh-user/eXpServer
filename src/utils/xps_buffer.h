@@ -19,6 +19,7 @@ struct xps_buffer_list_s {
 xps_buffer_t *xps_buffer_create(size_t size, size_t len, u_char *data);
 void xps_buffer_destroy(xps_buffer_t *buff);
 xps_buffer_t *xps_buffer_duplicate(xps_buffer_t *buff);
+int xps_buffer_append(xps_buffer_t *buff, const char *str, ...);
 
 // xps_buffer_list
 xps_buffer_list_t *xps_buffer_list_create();

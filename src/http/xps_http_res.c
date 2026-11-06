@@ -169,4 +169,14 @@ xps_buffer_t *xps_http_res_serialize(xps_http_res_t *http_res) {
 	return buff;
 }
 
-// void xps_http_res_set_body(xps_http_res_t *http_res, xps_buffer_t *buff);
+void xps_http_res_set_body(xps_http_res_t *http_res, xps_buffer_t *buff) {
+    assert(http_res != NULL);
+    assert(buff != NULL);
+
+    xps_buffer_t *http_body = xps_buffer_duplicate(buff);
+    if (http_body == NULL) {
+        logger(LOG_ERROR, "xps_http_res_set_body()", "xps_buffer_duplicate() failed for http_body");
+        return;
+    }
+    http_res->body = http_body;
+}

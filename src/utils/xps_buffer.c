@@ -56,6 +56,46 @@ xps_buffer_t *xps_buffer_duplicate(xps_buffer_t *buff) {
 	return dup_buff;
 }
 
+int xps_buffer_append(xps_buffer_t *buff, const char *format_str, ...) {
+	assert(buff != NULL);
+	assert(format_str != NULL);
+
+	va_list args;
+	va_start(args, format_str);
+
+	va_list args_copy;
+	va_copy(args_copy, args);
+	int needed = vsnprintf(NULL, 0, format_str, args_copy);
+	va_end(args_copy);
+
+	if (needed < 0) {
+		va_end(args);
+		logger(LOG_ERROR, "xps_buffer_append()", "vsnprintf formatting failed");
+		return E_FAIL;
+	}
+
+	while (buff->len + needed >= buff->size) {
+		size_t new_len = (size_t)buff->size * 1.5;
+		if (new_len < buff->len + needed + 1)
+			new_len = buff->len + needed + 1;
+
+		u_char *new_data = (u_char *)realloc(buff->data, new_len);
+		if (new_data == NULL) {
+			va_end(args);
+			logger(LOG_ERROR, "xps_buffer_append()",
+				   "realloc failed for buff->data");
+			return E_FAIL;
+		}
+		buff->data = new_data;
+		buff->size = new_len;
+	}
+
+	vsnprintf(buff->data + buff->len, buff->size + buff->len, format_str, args);
+	va_end(args);
+	buff->len += needed;
+	return OK;
+}
+
 // xps_buffer_list
 
 xps_buffer_list_t *xps_buffer_list_create() {

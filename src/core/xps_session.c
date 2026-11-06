@@ -467,11 +467,58 @@ void session_process_request(xps_session_t *session) {
 	}
 
 	if (lookup->type == REQ_FILE_SERVE) {
+		if (lookup->dir_path != NULL) {
+			xps_buffer_t *dir_html = xps_directory_browsing(
+				lookup->dir_path, session->http_req->pathname);
+			xps_config_lookup_destroy(lookup, session->core);
+
+			if (dir_html == NULL) {
+				http_res = xps_http_res_create(session->core,
+											   HTTP_INTERNAL_SERVER_ERROR);
+				if (http_res == NULL) {
+					logger(LOG_ERROR, "session_process_request()",
+						   "xps_http_res_create() failed for error response");
+					return;
+				}
+				xps_buffer_t *buff = xps_http_res_serialize(http_res);
+				xps_http_res_destroy(http_res);
+				if (buff == NULL) {
+					logger(
+						LOG_ERROR, "session_process_request()",
+						"xps_http_res_serialize() failed for error response");
+					return;
+				}
+				set_to_client_buff(session, buff);
+				return;
+			}
+
+			http_res = xps_http_res_create(session->core, HTTP_OK);
+			xps_http_res_set_body(http_res, dir_html);
+			char contentLength[24];
+			snprintf(contentLength, sizeof(contentLength), "%zu",
+					 dir_html->len);
+			xps_buffer_destroy(dir_html);
+			xps_http_set_header(&(http_res->headers), "Content-Length",
+								contentLength);
+			xps_http_set_header(&(http_res->headers), "Content-Type",
+								"text/html");
+
+			xps_buffer_t *buff = xps_http_res_serialize(http_res);
+			xps_http_res_destroy(http_res);
+			if (buff == NULL) {
+				logger(LOG_ERROR, "session_process_request()",
+					   "xps_http_res_serialize() failed for HTTP_OK");
+				return;
+			}
+			set_to_client_buff(session, buff);
+			return;
+		}
+
 		xps_file_t *file =
 			xps_file_create(session->core, lookup->file_path, &error);
 		xps_config_lookup_destroy(lookup, session->core);
 		if (file == NULL) {
-			xps_http_res_t *http_res = xps_http_res_create(
+			http_res = xps_http_res_create(
 				session->core, error == E_PERMISSION ? HTTP_FORBIDDEN
 							   : error == E_NOTFOUND
 								   ? HTTP_NOT_FOUND
@@ -571,8 +618,7 @@ void session_process_request(xps_session_t *session) {
 
 		session->upstream = upstream;
 	} else if (lookup->type == REQ_REDIRECT) {
-		xps_http_res_t *http_res =
-			xps_http_res_create(session->core, lookup->http_status_code);
+		http_res = xps_http_res_create(session->core, lookup->http_status_code);
 		xps_http_set_header(&http_res->headers, "Location",
 							lookup->redirect_url);
 

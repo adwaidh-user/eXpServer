@@ -249,21 +249,6 @@ xps_config_lookup_t *xps_config_lookup(xps_config_t *config,
 			*error = E_FAIL;
 			return NULL;
 		}
-		// if (!is_abs_path(resource_path)) {
-		// 	/* we require abosulte path so we need to see
-		// 	  if the current path is absolute or not */
-		// 	char *abs_path = realpath(resource_path, NULL);
-		// 	if (abs_path == NULL) {
-		// 		logger(LOG_ERROR, "xps_config_lookup()",
-		// 			   "realpath() returned NULL for resource_path");
-		// 		free(lookup);
-		// 		free(resource_path);
-		// 		*error = E_FAIL;
-		// 		return NULL;
-		// 	}
-		// 	free(resource_path);
-		// 	resource_path = abs_path;
-		// }
 		char *abs_path = realpath(resource_path, NULL);
 		if (abs_path == NULL) {
 			if (errno == ENOENT) {
@@ -292,8 +277,6 @@ xps_config_lookup_t *xps_config_lookup(xps_config_t *config,
 		if (is_file(resource_path)) {
 			lookup->file_path = resource_path;
 		} else if (is_dir(resource_path)) { // is directory
-			/* If request is for a directory, serve the index file (e.g.
-			 * index.html) instead of showing the directory listing. */
 			bool index_file_found = false;
 			for (int i = 0; i < route->index.length; i++) {
 				char *index_file =
@@ -307,14 +290,12 @@ xps_config_lookup_t *xps_config_lookup(xps_config_t *config,
 				}
 				free(index_file);
 			}
-			free(resource_path);
 			if (!index_file_found) {
-				logger(LOG_ERROR, "xps_config_lookup()",
-					   "index.html not found");
-				free(lookup);
-				*error = E_NOTFOUND;
-				return NULL;
+                lookup->dir_path = resource_path;
+				*error = OK;
+				return lookup;
 			}
+			free(resource_path);
 		} else {
 			logger(LOG_ERROR, "xps_config_lookup()",
 				   "Undefined resource: neither file nor directory");

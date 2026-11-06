@@ -16,6 +16,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
+#include <dirent.h>
 
 // 3rd party libraries
 #include "lib/parson/parson.h" // https://github.com/kgabis/parson
@@ -182,6 +183,7 @@ typedef void (*xps_handler_t)(void *ptr);
 #include "core/xps_loop.h"
 #include "core/xps_pipe.h"
 #include "core/xps_session.h"
+#include "disk/xps_directory.h"
 #include "disk/xps_file.h"
 #include "disk/xps_mime.h"
 #include "http/xps_http.h"

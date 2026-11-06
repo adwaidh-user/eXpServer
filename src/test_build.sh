@@ -7,6 +7,7 @@ gcc -g -o "../build/xps_v$1_test" \
     core/xps_loop.c \
     core/xps_pipe.c \
     core/xps_session.c \
+    disk/xps_directory.c \
     disk/xps_file.c \
     disk/xps_mime.c \
     http/xps_http.c \

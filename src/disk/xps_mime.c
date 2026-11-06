@@ -6,6 +6,7 @@ xps_keyval_t mime_types[] = {
 	{".c", "text/x-c"},
 	{".cc", "text/x-c"},
 	{".cpp", "text/x-c"},
+	{".html", "text/html"},
 	{".dir", "application/x-director"},
 	{".dxr", "application/x-director"},
 	{".fgd", "application/x-director"},
@@ -17,6 +18,7 @@ xps_keyval_t mime_types[] = {
 	{".jpg", "image/jpeg"},
 	{".jpeg", "image/jpeg"},
 	{".pdf", "application/pdf"},
+	{".json", "application/json"},
 };
 int n_mimes = sizeof(mime_types) / sizeof(mime_types[0]);
 
