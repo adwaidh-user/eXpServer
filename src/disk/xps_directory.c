@@ -1,5 +1,13 @@
 #include "xps_directory.h"
 
+#define BYTE 0
+#define KILOBYTE 1
+#define MEGABYTE 2
+#define GIGABYTE 3
+#define TERABYTE 4
+
+char *size_unit[] = {"B", "KB", "MB", "KB", "TB"};
+
 xps_buffer_t *xps_directory_browsing(const char *dir_path,
 									 const char *pathname) {
 	assert(dir_path != NULL);
@@ -78,22 +86,36 @@ xps_buffer_t *xps_directory_browsing(const char *dir_path,
 			if (temp_pathname[strlen(temp_pathname) - 1] == '/')
 				temp_pathname[strlen(temp_pathname) - 1] = '\0';
 
-			// char time_buff[20];
-			// strftime(time_buff, sizeof(time_buff), "%Y-%m-%d %H:%M:%S",
-			// localtime(&file_stat.st_mtime));
+			char time_buff[20];
+			strftime(time_buff, sizeof(time_buff), "%Y-%m-%d %H:%M:%S",
+					 localtime(&file_stat.st_mtime));
 
-			if (S_ISREG(file_stat.st_mode)) // IS_FILE
+			if (S_ISREG(file_stat.st_mode)) { // IS_FILE
+				double filesize = (double)file_stat.st_size;
+				int filesize_unit = BYTE;
+				while (filesize >= 1024.0 && filesize_unit < TERABYTE) {
+					filesize /= 1024.0;
+					filesize_unit++;
+				}
+
+				char size_buff[10];
+				snprintf(size_buff, sizeof(size_buff),
+						 filesize_unit == 0 ? "%.0f %s" : "%.2f %s", filesize,
+						 size_unit[filesize_unit]);
+
+				xps_buffer_append(directory_browsing,
+								  "<tr><td><a href='%s/%s'>%s%s</a></td>"
+								  "<td>%s</td><td>%s</td></tr>\n",
+								  temp_pathname, dir_entry->d_name,
+								  dir_entry->d_name, is_dir, size_buff,
+								  time_buff);
+			} else
 				xps_buffer_append(
 					directory_browsing,
-					"<tr><td><a href='%s/%s'>%s%s</a></td></tr>\n",
-					temp_pathname, dir_entry->d_name, dir_entry->d_name,
-					is_dir);
-			else
-				xps_buffer_append(
-					directory_browsing,
-					"<tr><td><a href='%s/%s'>%s%s</a></td><td></td></tr>\n",
-					temp_pathname, dir_entry->d_name, dir_entry->d_name,
-					is_dir);
+					"<tr><td><a "
+					"href='%s/%s'>%s%s</a></td><td></td><td>%s</td></tr>\n",
+					temp_pathname, dir_entry->d_name, dir_entry->d_name, is_dir,
+					time_buff);
 			free(temp_pathname);
 		}
 
