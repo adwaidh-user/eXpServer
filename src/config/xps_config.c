@@ -78,6 +78,8 @@ void xps_config_destroy(xps_config_t *config) {
 				if (route) {
 					vec_deinit(&(route->index));
 					vec_deinit(&(route->upstreams));
+					vec_deinit(&(route->ip_whitelist));
+					vec_deinit(&(route->ip_blacklist));
 					free(route);
 				}
 			}
@@ -226,8 +228,8 @@ xps_config_lookup_t *xps_config_lookup(xps_config_t *config,
 	lookup->redirect_url = NULL;
 	lookup->upstream = NULL;
 	lookup->http_status_code = 0;
-	vec_init(&lookup->ip_blacklist);
-	vec_init(&lookup->ip_whitelist);
+    lookup->ip_whitelist = route->ip_whitelist;
+    lookup->ip_blacklist = route->ip_blacklist;
 
 	if (strcmp(route->type, "file_serve") == 0)
 		lookup->type = REQ_FILE_SERVE;
@@ -291,7 +293,7 @@ xps_config_lookup_t *xps_config_lookup(xps_config_t *config,
 				free(index_file);
 			}
 			if (!index_file_found) {
-                lookup->dir_path = resource_path;
+				lookup->dir_path = resource_path;
 				*error = OK;
 				return lookup;
 			}
@@ -346,9 +348,6 @@ void xps_config_lookup_destroy(xps_config_lookup_t *config_lookup,
 		free(config_lookup->file_path);
 	if (config_lookup->dir_path)
 		free(config_lookup->dir_path);
-
-	vec_deinit(&config_lookup->ip_whitelist);
-	vec_deinit(&config_lookup->ip_blacklist);
 
 	free(config_lookup);
 }
@@ -469,6 +468,8 @@ xps_config_route_t *parse_route(JSON_Object *route_object) {
 
 	vec_init(&(route->index));
 	vec_init(&(route->upstreams));
+	vec_init(&(route->ip_whitelist));
+	vec_init(&(route->ip_blacklist));
 
 	if (strcmp(route->type, "file_serve") == 0) {
 		route->dir_path = json_object_get_string(route_object, "dir_path");
@@ -499,6 +500,44 @@ xps_config_route_t *parse_route(JSON_Object *route_object) {
 		assert(route->http_status_code != 0);
 		assert(route->redirect_url != NULL);
 	}
+
+	JSON_Array *ip_whitelist =
+		json_object_get_array(route_object, "ip_whitelist");
+	JSON_Array *ip_blacklist =
+		json_object_get_array(route_object, "ip_blacklist");
+
+	int ip_whitelist_len = json_array_get_count(ip_whitelist);
+	int ip_blacklist_len = json_array_get_count(ip_blacklist);
+
+	if (ip_whitelist) {
+		for (int i = 0; i < ip_whitelist_len; i++) {
+			const char *ip = json_array_get_string(ip_whitelist, i);
+			if (!ip)
+				continue;
+
+			vec_push(&(route->ip_whitelist), (void *)ip);
+		}
+	}
+	if (ip_blacklist) {
+		for (int i = 0; i < ip_blacklist_len; i++) {
+			const char *ip = json_array_get_string(ip_blacklist, i);
+
+			if (!ip)
+				continue;
+
+			for (int j = 0; j < ip_whitelist_len; j++) {
+				const char *whitelisted_ip = route->ip_whitelist.data[j];
+				if (whitelisted_ip == NULL)
+					continue;
+				if (strcmp(whitelisted_ip, ip) == 0) {
+					route->ip_whitelist.data[j] = NULL;
+					break;
+				}
+			}
+			vec_push(&(route->ip_blacklist), (void *)ip);
+		}
+	}
+	vec_filter_null(&(route->ip_whitelist));
 
 	return route;
 }

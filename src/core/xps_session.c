@@ -461,9 +461,71 @@ void session_process_request(xps_session_t *session) {
 				xps_http_res_create(session->core, HTTP_INTERNAL_SERVER_ERROR);
 
 		xps_buffer_t *buff = xps_http_res_serialize(http_res);
-		set_to_client_buff(session, buff);
 		xps_http_res_destroy(http_res);
+		if (buff == NULL) {
+			logger(LOG_ERROR, "session_process_request()",
+				   "xps_http_res_serialize() failed for HTTP_BAD_REQUEST");
+			return;
+		}
+		set_to_client_buff(session, buff);
 		return;
+	}
+
+	const char *client_ip = session->client->remote_ip;
+	// check whitelist exist
+	if (lookup->ip_whitelist.length > 0) {
+		bool is_allowed = false;
+		for (size_t i = 0; i < lookup->ip_whitelist.length; i++) {
+			const char *ip_w = lookup->ip_whitelist.data[i];
+			if (ip_w == NULL)
+				continue;
+
+			if (strcmp(client_ip, ip_w) == 0) {
+				is_allowed = true;
+				break;
+			}
+		}
+		if (!is_allowed) {
+			logger(LOG_DEBUG, "session_process_request()",
+				   "client ip %s is not whitelisted", client_ip);
+			xps_config_lookup_destroy(lookup, session->core);
+			xps_http_res_t *http_res =
+				xps_http_res_create(session->core, HTTP_FORBIDDEN);
+			xps_buffer_t *buff = xps_http_res_serialize(http_res);
+			if (buff == NULL) {
+				logger(LOG_ERROR, "session_process_request()",
+					   "xps_http_res_serialize() failed for HTTP_BAD_REQUEST");
+				return;
+			}
+			set_to_client_buff(session, buff);
+			xps_http_res_destroy(http_res);
+			return;
+		}
+	}
+
+	// check in blacklist
+	if (lookup->ip_blacklist.length > 0) {
+		for (size_t i = 0; i < lookup->ip_blacklist.length; i++) {
+			const char *ip_b = lookup->ip_blacklist.data[i];
+
+			if (strcmp(client_ip, ip_b) == 0) {
+				logger(LOG_DEBUG, "session_process_request()",
+					   "client ip %s is blacklisted", client_ip);
+				xps_config_lookup_destroy(lookup, session->core);
+				xps_http_res_t *http_res =
+					xps_http_res_create(session->core, HTTP_FORBIDDEN);
+				xps_buffer_t *buff = xps_http_res_serialize(http_res);
+				if (buff == NULL) {
+					logger(
+						LOG_ERROR, "session_process_request()",
+						"xps_http_res_serialize() failed for error response");
+					return;
+				}
+				set_to_client_buff(session, buff);
+				xps_http_res_destroy(http_res);
+				return;
+			}
+		}
 	}
 
 	if (lookup->type == REQ_FILE_SERVE) {
@@ -627,6 +689,7 @@ void session_process_request(xps_session_t *session) {
 		set_to_client_buff(session, http_res_buff);
 		xps_http_res_destroy(http_res);
 	} else {
+		xps_config_lookup_destroy(lookup, session->core);
 		logger(LOG_ERROR, "session_process_request()", "invalid lookup type");
 		xps_session_destroy(session);
 	}
