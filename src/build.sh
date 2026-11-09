@@ -9,6 +9,7 @@ gcc -g -static -o "../build/xps_v$1" \
     core/xps_session.c \
     disk/xps_directory.c \
     disk/xps_file.c \
+    disk/xps_gzip.c \
     disk/xps_mime.c \
     http/xps_http.c \
     http/xps_http_req.c \
@@ -19,4 +20,5 @@ gcc -g -static -o "../build/xps_v$1" \
     utils/xps_buffer.c \
     utils/xps_cliargs.c \
     utils/xps_logger.c \
-    utils/xps_utils.c
+    utils/xps_utils.c \
+    -lz

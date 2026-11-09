@@ -6,6 +6,35 @@ xps_config_route_t *parse_route(JSON_Object *route_object);
 // xps_config_route_t *parse_hostname(JSON_Object *hostname_object);
 void parse_all_listeners(xps_config_t *config);
 
+static const char *default_gzip_mimes[] = {"text/html",
+										   "text/css",
+										   "text/plain",
+										   "text/javascript",
+										   "application/javascript",
+										   "application/json",
+										   "application/xml",
+										   "text/xml",
+										   "image/svg+xml"};
+static const size_t n_default_mimes =
+	sizeof(default_gzip_mimes) / sizeof(default_gzip_mimes[0]);
+
+bool is_gzip_allowed_mime(const char *mime_type, vec_void_t *custom_mimes) {
+	if (mime_type == NULL)
+		return false;
+
+	for (int i = 0; i < n_default_mimes; i++) {
+		if (strcmp(mime_type, default_gzip_mimes[i]) == 0)
+			return true;
+	}
+
+	for (int i = 0; i < custom_mimes->length; i++) {
+		if (strcmp(mime_type, custom_mimes->data[i]) == 0)
+			return true;
+	}
+
+	return false;
+}
+
 xps_config_t *xps_config_create(const char *config_path) {
 	assert(config_path != NULL);
 
@@ -80,6 +109,7 @@ void xps_config_destroy(xps_config_t *config) {
 					vec_deinit(&(route->upstreams));
 					vec_deinit(&(route->ip_whitelist));
 					vec_deinit(&(route->ip_blacklist));
+					vec_deinit(&(route->gzip_mime_types));
 					free(route);
 				}
 			}
@@ -228,8 +258,11 @@ xps_config_lookup_t *xps_config_lookup(xps_config_t *config,
 	lookup->redirect_url = NULL;
 	lookup->upstream = NULL;
 	lookup->http_status_code = 0;
-    lookup->ip_whitelist = route->ip_whitelist;
-    lookup->ip_blacklist = route->ip_blacklist;
+	lookup->ip_whitelist = route->ip_whitelist;
+	lookup->ip_blacklist = route->ip_blacklist;
+	lookup->gzip_enable = false;
+	lookup->gzip_level = route->gzip_level;
+	lookup->gzip_mime_types = route->gzip_mime_types;
 
 	if (strcmp(route->type, "file_serve") == 0)
 		lookup->type = REQ_FILE_SERVE;
@@ -306,6 +339,13 @@ xps_config_lookup_t *xps_config_lookup(xps_config_t *config,
 			*error = E_NOTFOUND;
 			return NULL;
 		}
+
+		if (route->gzip_enable && lookup->file_path != NULL) {
+			const char *mime_type = xps_get_mime(lookup->file_path);
+			lookup->gzip_enable =
+				is_gzip_allowed_mime(mime_type, &route->gzip_mime_types);
+		}
+
 		*error = OK;
 		return lookup;
 	} else if (lookup->type == REQ_REVERSE_PROXY) {
@@ -465,11 +505,14 @@ xps_config_route_t *parse_route(JSON_Object *route_object) {
 	route->dir_path = NULL;
 	route->redirect_url = NULL;
 	route->http_status_code = 200;
+	route->gzip_enable = false;
+	route->gzip_level = -1;
 
 	vec_init(&(route->index));
 	vec_init(&(route->upstreams));
 	vec_init(&(route->ip_whitelist));
 	vec_init(&(route->ip_blacklist));
+	vec_init(&(route->gzip_mime_types));
 
 	if (strcmp(route->type, "file_serve") == 0) {
 		route->dir_path = json_object_get_string(route_object, "dir_path");
@@ -538,6 +581,23 @@ xps_config_route_t *parse_route(JSON_Object *route_object) {
 		}
 	}
 	vec_filter_null(&(route->ip_whitelist));
+
+	if (json_object_has_value_of_type(route_object, "gzip_enable", JSONBoolean))
+		route->gzip_enable =
+			json_object_get_boolean(route_object, "gzip_enable");
+	if (json_object_has_value_of_type(route_object, "gzip_level", JSONNumber))
+		route->gzip_level =
+			(int)json_object_get_number(route_object, "gzip_level");
+
+	JSON_Array *gzip_mime_types =
+		json_object_get_array(route_object, "gzip_mime_types");
+	if (gzip_mime_types) {
+		for (int i = 0; i < json_array_get_count(gzip_mime_types); i++) {
+			const char *mime_type = json_array_get_string(gzip_mime_types, i);
+			if (mime_type)
+				vec_push(&(route->gzip_mime_types), (void *)mime_type);
+		}
+	}
 
 	return route;
 }

@@ -17,6 +17,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <zlib.h>
 
 // 3rd party libraries
 #include "lib/parson/parson.h" // https://github.com/kgabis/parson
@@ -151,6 +152,7 @@ struct xps_config_listener_s;
 struct xps_config_route_s;
 struct xps_config_lookup_s;
 struct xps_cliargs_s;
+struct xps_gzip_s;
 
 // Struct typedefs
 typedef struct xps_core_s xps_core_t;
@@ -173,6 +175,7 @@ typedef struct xps_config_listener_s xps_config_listener_t;
 typedef struct xps_config_route_s xps_config_route_t;
 typedef struct xps_config_lookup_s xps_config_lookup_t;
 typedef struct xps_cliargs_s xps_cliargs_t;
+typedef struct xps_gzip_s xps_gzip_t;
 
 // Function typedefs
 typedef void (*xps_handler_t)(void *ptr);
@@ -185,6 +188,7 @@ typedef void (*xps_handler_t)(void *ptr);
 #include "core/xps_session.h"
 #include "disk/xps_directory.h"
 #include "disk/xps_file.h"
+#include "disk/xps_gzip.h"
 #include "disk/xps_mime.h"
 #include "http/xps_http.h"
 #include "http/xps_http_req.h"

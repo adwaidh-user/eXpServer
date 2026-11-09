@@ -15,6 +15,7 @@ void set_to_client_buff(xps_session_t *session, xps_buffer_t *buff);
 void set_from_client_buff(xps_session_t *session, xps_buffer_t *buff);
 void session_check_destroy(xps_session_t *session);
 void session_process_request(xps_session_t *session);
+void set_err_msg(xps_session_t *session, int err_code);
 
 xps_session_t *xps_session_create(xps_core_t *core, xps_connection_t *client) {
 	assert(core);
@@ -76,6 +77,7 @@ xps_session_t *xps_session_create(xps_core_t *core, xps_connection_t *client) {
 	session->http_req = NULL;
 	session->file = NULL;
 	session->lookup = NULL;
+	session->gzip = NULL;
 
 	// Attach client
 	if (xps_pipe_create(core, DEFAULT_PIPE_BUFF_THRESH, client->source,
@@ -426,23 +428,9 @@ void xps_session_destroy(xps_session_t *session) {
 void session_process_request(xps_session_t *session) {
 	assert(session != NULL);
 
-	xps_http_res_t *http_res;
 	// BAD REQUEST
 	if (session->http_req == NULL || session->http_req->path == NULL) {
-		http_res = xps_http_res_create(session->core, HTTP_BAD_REQUEST);
-		if (http_res == NULL) {
-			logger(LOG_ERROR, "session_process_request()",
-				   "xps_http_res_create() failed for HTTP_BAD_REQUEST");
-			return;
-		}
-		xps_buffer_t *buff = xps_http_res_serialize(http_res);
-		xps_http_res_destroy(http_res);
-		if (buff == NULL) {
-			logger(LOG_ERROR, "session_process_request()",
-				   "xps_http_res_serialize() failed for HTTP_BAD_REQUEST");
-			return;
-		}
-		set_to_client_buff(session, buff);
+		set_err_msg(session, HTTP_BAD_REQUEST);
 		return;
 	}
 
@@ -453,21 +441,12 @@ void session_process_request(xps_session_t *session) {
 		logger(LOG_ERROR, "session_process_request()",
 			   "xps_config_lookup() returned NULl. err code: %d", error);
 		if (error == E_NOTFOUND)
-			http_res = xps_http_res_create(session->core, HTTP_NOT_FOUND);
+			set_err_msg(session, HTTP_NOT_FOUND);
 		else if (error == E_PERMISSION)
-			http_res = xps_http_res_create(session->core, HTTP_FORBIDDEN);
+			set_err_msg(session, HTTP_FORBIDDEN);
 		else
-			http_res =
-				xps_http_res_create(session->core, HTTP_INTERNAL_SERVER_ERROR);
+			set_err_msg(session, HTTP_INTERNAL_SERVER_ERROR);
 
-		xps_buffer_t *buff = xps_http_res_serialize(http_res);
-		xps_http_res_destroy(http_res);
-		if (buff == NULL) {
-			logger(LOG_ERROR, "session_process_request()",
-				   "xps_http_res_serialize() failed for HTTP_BAD_REQUEST");
-			return;
-		}
-		set_to_client_buff(session, buff);
 		return;
 	}
 
@@ -489,16 +468,7 @@ void session_process_request(xps_session_t *session) {
 			logger(LOG_DEBUG, "session_process_request()",
 				   "client ip %s is not whitelisted", client_ip);
 			xps_config_lookup_destroy(lookup, session->core);
-			xps_http_res_t *http_res =
-				xps_http_res_create(session->core, HTTP_FORBIDDEN);
-			xps_buffer_t *buff = xps_http_res_serialize(http_res);
-			if (buff == NULL) {
-				logger(LOG_ERROR, "session_process_request()",
-					   "xps_http_res_serialize() failed for HTTP_BAD_REQUEST");
-				return;
-			}
-			set_to_client_buff(session, buff);
-			xps_http_res_destroy(http_res);
+			set_err_msg(session, HTTP_FORBIDDEN);
 			return;
 		}
 	}
@@ -512,21 +482,22 @@ void session_process_request(xps_session_t *session) {
 				logger(LOG_DEBUG, "session_process_request()",
 					   "client ip %s is blacklisted", client_ip);
 				xps_config_lookup_destroy(lookup, session->core);
-				xps_http_res_t *http_res =
-					xps_http_res_create(session->core, HTTP_FORBIDDEN);
-				xps_buffer_t *buff = xps_http_res_serialize(http_res);
-				if (buff == NULL) {
-					logger(
-						LOG_ERROR, "session_process_request()",
-						"xps_http_res_serialize() failed for error response");
-					return;
-				}
-				set_to_client_buff(session, buff);
-				xps_http_res_destroy(http_res);
+				set_err_msg(session, HTTP_FORBIDDEN);
 				return;
 			}
 		}
 	}
+
+	session->lookup = lookup;
+
+	const char *accept_encoding =
+		xps_http_get_header(&(session->http_req->headers), "Accept-Encoding");
+	bool client_accepts_gzip = false;
+
+	if (accept_encoding != NULL && strcmp(accept_encoding, "gzip") == 0)
+		client_accepts_gzip = true;
+
+	bool use_gzip_compression = client_accepts_gzip && lookup->gzip_enable;
 
 	if (lookup->type == REQ_FILE_SERVE) {
 		if (lookup->dir_path != NULL) {
@@ -535,26 +506,17 @@ void session_process_request(xps_session_t *session) {
 			xps_config_lookup_destroy(lookup, session->core);
 
 			if (dir_html == NULL) {
-				http_res = xps_http_res_create(session->core,
-											   HTTP_INTERNAL_SERVER_ERROR);
-				if (http_res == NULL) {
-					logger(LOG_ERROR, "session_process_request()",
-						   "xps_http_res_create() failed for error response");
-					return;
-				}
-				xps_buffer_t *buff = xps_http_res_serialize(http_res);
-				xps_http_res_destroy(http_res);
-				if (buff == NULL) {
-					logger(
-						LOG_ERROR, "session_process_request()",
-						"xps_http_res_serialize() failed for error response");
-					return;
-				}
-				set_to_client_buff(session, buff);
+				set_err_msg(session, HTTP_INTERNAL_SERVER_ERROR);
 				return;
 			}
 
-			http_res = xps_http_res_create(session->core, HTTP_OK);
+			xps_http_res_t *http_res =
+				xps_http_res_create(session->core, HTTP_OK);
+			if (http_res == NULL) {
+				logger(LOG_ERROR, "session_process_request()",
+					   "xps_http_res_create() failed for HTTP_OK");
+				return;
+			}
 			xps_http_res_set_body(http_res, dir_html);
 			char contentLength[24];
 			snprintf(contentLength, sizeof(contentLength), "%zu",
@@ -578,26 +540,15 @@ void session_process_request(xps_session_t *session) {
 
 		xps_file_t *file =
 			xps_file_create(session->core, lookup->file_path, &error);
-		xps_config_lookup_destroy(lookup, session->core);
 		if (file == NULL) {
-			http_res = xps_http_res_create(
-				session->core, error == E_PERMISSION ? HTTP_FORBIDDEN
-							   : error == E_NOTFOUND
-								   ? HTTP_NOT_FOUND
-								   : HTTP_INTERNAL_SERVER_ERROR);
-			if (http_res == NULL) {
-				logger(LOG_ERROR, "session_process_request()",
-					   "xps_http_res_create() failed for error response");
-				return;
-			}
-			xps_buffer_t *buff = xps_http_res_serialize(http_res);
-			xps_http_res_destroy(http_res);
-			if (buff == NULL) {
-				logger(LOG_ERROR, "session_process_request()",
-					   "xps_http_res_serialize() failed for error response");
-				return;
-			}
-			set_to_client_buff(session, buff);
+			if (error == E_NOTFOUND)
+				set_err_msg(session, HTTP_NOT_FOUND);
+			else if (error == E_PERMISSION)
+				set_err_msg(session, HTTP_FORBIDDEN);
+			else
+				set_err_msg(session, HTTP_INTERNAL_SERVER_ERROR);
+
+			xps_config_lookup_destroy(lookup, session->core);
 			return;
 		}
 
@@ -605,14 +556,24 @@ void session_process_request(xps_session_t *session) {
 			xps_file_destroy(session->file);
 		session->file = file;
 
-		http_res = xps_http_res_create(session->core, HTTP_OK);
+		xps_http_res_t *http_res = xps_http_res_create(session->core, HTTP_OK);
+		if (http_res == NULL) {
+			logger(LOG_ERROR, "session_process_request()",
+				   "xps_http_res_create() failed for HTTP_OK");
+			xps_config_lookup_destroy(lookup, session->core);
+			return;
+		}
 
-		/*the body is streamed separately through the file pipe, so
-		 * Content-Length must be the file's size*/
-		char contentLength[24];
-		snprintf(contentLength, sizeof(contentLength), "%zu", file->size);
-		xps_http_set_header(&(http_res->headers), "Content-Length",
-							contentLength);
+		if (use_gzip_compression) {
+			xps_http_set_header(&(http_res->headers), "Content-Encoding",
+								"gzip");
+		} else {
+			char contentLength[24];
+			snprintf(contentLength, sizeof(contentLength), "%zu", file->size);
+			xps_http_set_header(&(http_res->headers), "Content-Length",
+								contentLength);
+		}
+
 		xps_http_set_header(&(http_res->headers), "Content-Type",
 							session->file->mime_type ? session->file->mime_type
 													 : "text/plain");
@@ -622,21 +583,59 @@ void session_process_request(xps_session_t *session) {
 		if (buff == NULL) {
 			logger(LOG_ERROR, "session_process_request()",
 				   "xps_http_res_serialize() failed for HTTP_OK");
-			return;
-		}
-		/*create pipe with session->file->source and session->file_sink*/
-		if (xps_pipe_create(session->core, DEFAULT_PIPE_BUFF_THRESH,
-							session->file->source,
-							session->file_sink) == NULL) {
-			xps_file_destroy(file);
-			session->file = NULL;
-			xps_buffer_destroy(buff);
-			logger(
-				LOG_ERROR, "session_process_request()",
-				"xps_pipe_create() failed: file source and session file sink");
+			xps_config_lookup_destroy(lookup, session->core);
 			return;
 		}
 
+		if (use_gzip_compression) {
+			xps_gzip_t *gzip = xps_gzip_create(lookup->gzip_level);
+			if (gzip == NULL) {
+				logger(LOG_ERROR, "session_process_request()",
+					   "xps_gzip_create() failed to create a gzip compression "
+					   "instance");
+				return;
+			}
+
+			xps_pipe_t *fsource_gsink_pipe =
+				xps_pipe_create(session->core, DEFAULT_PIPE_BUFF_THRESH,
+								session->file->source, gzip->sink);
+			xps_pipe_t *fsink_gsource_pipe =
+				xps_pipe_create(session->core, DEFAULT_PIPE_BUFF_THRESH,
+								gzip->source, session->file_sink);
+
+			if (fsource_gsink_pipe == NULL || fsink_gsource_pipe == NULL) {
+				logger(LOG_ERROR, "session_process_request()",
+					   "xps_pipe_create() failed for gzip-file pipe");
+				if (fsource_gsink_pipe)
+					xps_pipe_destroy(fsource_gsink_pipe);
+				if (fsink_gsource_pipe)
+					xps_pipe_destroy(fsink_gsource_pipe);
+
+				xps_config_lookup_destroy(lookup, session->core);
+				xps_gzip_destroy(gzip);
+				xps_file_destroy(file);
+				session->file = NULL;
+				xps_buffer_destroy(buff);
+				return;
+			}
+
+			session->gzip = gzip;
+		} else {
+			/*create pipe with session->file->source and session->file_sink*/
+			if (xps_pipe_create(session->core, DEFAULT_PIPE_BUFF_THRESH,
+								session->file->source,
+								session->file_sink) == NULL) {
+				xps_file_destroy(file);
+				session->file = NULL;
+				xps_buffer_destroy(buff);
+				xps_config_lookup_destroy(lookup, session->core);
+				logger(LOG_ERROR, "session_process_request()",
+					   "xps_pipe_create() failed: file source and session file "
+					   "sink");
+				return;
+			}
+		}
+		xps_config_lookup_destroy(lookup, session->core);
 		set_to_client_buff(session, buff);
 	} else if (lookup->type == REQ_REVERSE_PROXY) {
 		char host[256];
@@ -651,20 +650,7 @@ void session_process_request(xps_session_t *session) {
 		if (upstream == NULL) {
 			logger(LOG_ERROR, "session_process_request()",
 				   "xps_upstream_create() returned NULL");
-			http_res = xps_http_res_create(session->core, HTTP_BAD_GATEWAY);
-			if (http_res == NULL) {
-				logger(LOG_ERROR, "session_process_request()",
-					   "xps_http_res_create() failed for error response");
-				return;
-			}
-			xps_buffer_t *buff = xps_http_res_serialize(http_res);
-			xps_http_res_destroy(http_res);
-			if (buff == NULL) {
-				logger(LOG_ERROR, "session_process_request()",
-					   "xps_http_res_serialize() failed for error response");
-				return;
-			}
-			set_to_client_buff(session, buff);
+			set_err_msg(session, HTTP_BAD_GATEWAY);
 			return;
 		}
 
@@ -680,7 +666,8 @@ void session_process_request(xps_session_t *session) {
 
 		session->upstream = upstream;
 	} else if (lookup->type == REQ_REDIRECT) {
-		http_res = xps_http_res_create(session->core, lookup->http_status_code);
+		xps_http_res_t *http_res =
+			xps_http_res_create(session->core, lookup->http_status_code);
 		xps_http_set_header(&http_res->headers, "Location",
 							lookup->redirect_url);
 
@@ -693,4 +680,22 @@ void session_process_request(xps_session_t *session) {
 		logger(LOG_ERROR, "session_process_request()", "invalid lookup type");
 		xps_session_destroy(session);
 	}
+}
+
+void set_err_msg(xps_session_t *session, int err_code) {
+	xps_http_res_t *http_res = xps_http_res_create(session->core, err_code);
+
+	if (http_res == NULL) {
+		logger(LOG_ERROR, "session_process_request()",
+			   "xps_http_res_create() failed for %d error message.", err_code);
+		return;
+	}
+	xps_buffer_t *buff = xps_http_res_serialize(http_res);
+	xps_http_res_destroy(http_res);
+	if (buff == NULL) {
+		logger(LOG_ERROR, "session_process_request()",
+			   "xps_http_res_create() failed for %d error message.", err_code);
+		return;
+	}
+	set_to_client_buff(session, buff);
 }
