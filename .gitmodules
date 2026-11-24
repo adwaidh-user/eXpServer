@@ -1,0 +1,3 @@
+[submodule "expserver-tester"]
+	path = expserver-tester
+	url = https://github.com/eXpServer/expserver-tester.git
